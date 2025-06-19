@@ -5,12 +5,11 @@ const bcrypt = require('bcrypt'); // Importa a biblioteca bcrypt
 
 // --- CREATE (AGORA COM HASH DE SENHA) ---
 exports.createOrganizacao = async (req, res) => {
-    // Agora recebemos a 'senha' em texto plano do formulário
     const { nome_organizacao, cnpj, email, senha, telefone, endereco } = req.body;
 
     // 1. Validação básica
-    if (!email || !senha || !nome_organizacao) {
-        return res.status(400).send({ message: "Nome, e-mail e senha são obrigatórios." });
+    if (!email || !senha || !nome_organizacao || !cnpj || !telefone || !endereco) {
+        return res.status(400).send({ message: "Preencha todos os campos." });
     }
 
     try {
@@ -107,22 +106,72 @@ exports.findOrganizacaoById = async (req, res) => {
     }
 };
 
-// UPDATE: Atualiza uma organização pelo ID
+// UPDATE: Atualiza uma organização com regras de negócio complexas
 exports.updateOrganizacaoById = async (req, res) => {
     const { id } = req.params;
-    const { nome_organizacao, cnpj, email, telefone, endereco } = req.body;
+    // Apenas os campos permitidos são extraídos do corpo da requisição
+    const { nome_organizacao, telefone, endereco, senha } = req.body;
+
     try {
-        const { rowCount } = await db.query(
-            "UPDATE organizacoes SET nome_organizacao = $1, cnpj = $2, email = $3, telefone = $4, endereco = $5 WHERE id_organizacao = $6",
-            [nome_organizacao, cnpj, email, telefone, endereco, id]
+        // 1. Buscar os dados atuais da organização, incluindo a data da última alteração
+        const orgDataResult = await db.query(
+            'SELECT nome_organizacao, telefone, endereco, data_ultima_alteracao, data_cadastro FROM organizacoes WHERE id_organizacao = $1',
+            [id]
         );
-        if (rowCount === 0) {
-            return res.status(404).send({ message: "Organização não encontrada para atualização." });
+
+        if (orgDataResult.rows.length === 0) {
+            return res.status(404).send({ message: "Organização não encontrada." });
         }
+
+        const organizacaoAtual = orgDataResult.rows[0];
+
+        // 2. Checar a regra dos 30 dias
+        const dataReferencia = organizacaoAtual.data_ultima_alteracao || organizacaoAtual.data_cadastro;
+        const hoje = new Date();
+        const diffTime = Math.abs(hoje - new Date(dataReferencia));
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays <= 30) {
+            return res.status(403).send({
+                message: `Alteração não permitida. Você só pode alterar seus dados a cada 30 dias. Próxima alteração possível em ${31 - diffDays} dia(s).`
+            });
+        }
+
+        // 3. Preparar os campos para a query de atualização
+        // Usamos os valores atuais como padrão caso um novo valor não seja fornecido
+        const novoNome = nome_organizacao || organizacaoAtual.nome_organizacao;
+        const novoTelefone = telefone || organizacaoAtual.telefone;
+        const novoEndereco = endereco || organizacaoAtual.endereco;
+
+        let queryUpdate;
+        let queryParams;
+
+        // 4. Lidar com a atualização de senha (se uma nova senha for fornecida)
+        if (senha) {
+            // Se uma nova senha foi enviada, geramos um novo hash
+            const salt = await bcrypt.genSalt(10);
+            const novaSenhaHash = await bcrypt.hash(senha, salt);
+
+            queryUpdate = `UPDATE organizacoes 
+                           SET nome_organizacao = $1, telefone = $2, endereco = $3, senha_hash = $4, data_ultima_alteracao = NOW() 
+                           WHERE id_organizacao = $5`;
+            queryParams = [novoNome, novoTelefone, novoEndereco, novaSenhaHash, id];
+        } else {
+            // Se nenhuma senha nova foi enviada, mantemos a senha_hash antiga
+            queryUpdate = `UPDATE organizacoes 
+                           SET nome_organizacao = $1, telefone = $2, endereco = $3, data_ultima_alteracao = NOW() 
+                           WHERE id_organizacao = $4`;
+            queryParams = [novoNome, novoTelefone, novoEndereco, id];
+        }
+
+        // 5. Executar a query de atualização no banco de dados
+        await db.query(queryUpdate, queryParams);
+
         res.status(200).send({ message: 'Organização atualizada com sucesso!' });
+
     } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: "Erro ao atualizar organização." });
+        console.error('Erro ao atualizar organização:', error);
+        res.status(500).send({ message: "Erro interno no servidor." });
     }
 };
 
