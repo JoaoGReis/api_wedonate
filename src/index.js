@@ -13,9 +13,12 @@ app.use(cors());         // Para permitir acesso de outras origens
 // Importa as rotas
 const organizacaoRoutes = require('./routes/organizacaoRoutes');
 const campanhaRoutes = require('./routes/campanhaRoutes');
+const localRoutes = require('./routes/localRoutes');
+
 // Define um prefixo para as rotas. Ex: /api/v1/organizacoes
 app.use('/api/v1', organizacaoRoutes);
 app.use('/api/v1', campanhaRoutes);
+app.use('/api/v1', localRoutes);
 // Rota raiz para teste
 app.get('/', (req, res) => {
     res.send('API WeDonate - CRUD Organizações');

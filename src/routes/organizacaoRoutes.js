@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const organizacaoController = require('../controllers/organizacaoController');
+const authMiddleware = require('../middleware/authMiddleware');
 
 // Rota POST para criar uma organização
 router.post('/organizacoes', organizacaoController.createOrganizacao);
@@ -13,11 +14,8 @@ router.get('/organizacoes', organizacaoController.listAllOrganizacoes);
 // Rota GET para buscar uma organização por ID
 router.get('/organizacoes/:id', organizacaoController.findOrganizacaoById);
 
-// Rota PUT para atualizar uma organização por ID
-router.put('/organizacoes/:id', organizacaoController.updateOrganizacaoById);
-
-// Rota DELETE para remover uma organização por ID
-router.delete('/organizacoes/:id', organizacaoController.deleteOrganizacaoById);
+router.put('/organizacoes/:id', authMiddleware, organizacaoController.updateOrganizacaoById);
+router.delete('/organizacoes/:id', authMiddleware, organizacaoController.deleteOrganizacaoById);
 
 // Rota POST para autenticar uma organização
 router.post('/login', organizacaoController.loginOrganizacao);

@@ -2,6 +2,7 @@
 
 const db = require('../config/database');
 const bcrypt = require('bcrypt'); // Importa a biblioteca bcrypt
+const jwt = require('jsonwebtoken');
 
 // --- CREATE (AGORA COM HASH DE SENHA) ---
 exports.createOrganizacao = async (req, res) => {
@@ -34,51 +35,6 @@ exports.createOrganizacao = async (req, res) => {
     }
 };
 
-// --- NOVA FUNÇÃO DE LOGIN ---
-exports.loginOrganizacao = async (req, res) => {
-    const { cnpj, senha } = req.body; // No seu app, o login é feito com CNPJ
-
-    // 1. Validação básica
-    if (!cnpj || !senha) {
-        return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
-    }
-
-    try {
-        // 2. Buscar a organização pelo CNPJ no banco
-        const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj]);
-
-        // Se não encontrar, retorna um erro genérico para não informar se o CNPJ existe ou não
-        if (rows.length === 0) {
-            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
-        }
-
-        const organizacao = rows[0];
-
-        // 3. Comparar a senha enviada com o hash salvo no banco
-        const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
-
-        // Se a senha não for válida, retorna o mesmo erro genérico
-        if (!senhaValida) {
-            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
-        }
-
-        // 4. Se a senha for válida, o login foi bem-sucedido!
-        // (Aqui, futuramente, você irá gerar um Token JWT para autenticação)
-        res.status(200).send({
-            message: "Login bem-sucedido!",
-            organizacao: {
-                id: organizacao.id_organizacao,
-                nome: organizacao.nome_organizacao,
-                email: organizacao.email
-                // Não envie a senha_hash de volta!
-            }
-        });
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: "Erro interno no servidor." });
-    }
-};
 
 // READ: Lista todas as organizações
 exports.listAllOrganizacoes = async (req, res) => {
@@ -189,3 +145,52 @@ exports.deleteOrganizacaoById = async (req, res) => {
         res.status(500).send({ message: "Erro ao deletar organização." });
     }
 };
+    // --- FUNÇÃO DE LOGIN ATUALIZADA ---
+    exports.loginOrganizacao = async (req, res) => {
+        const { cnpj, senha } = req.body;
+
+        if (!cnpj || !senha) {
+            return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
+        }
+
+        try {
+            const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj]);
+
+            if (rows.length === 0) {
+                return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+            }
+
+            const organizacao = rows[0];
+            const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
+
+            if (!senhaValida) {
+                return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+            }
+
+            // --- GERAÇÃO DO TOKEN JWT ---
+            // 1. Criar o "payload" - as informações que queremos guardar no token
+            const payload = {
+                id: organizacao.id_organizacao,
+                nome: organizacao.nome_organizacao
+            };
+
+            // 2. Assinar o token com o segredo do .env
+            // Ele expira em 8 horas ('8h').
+            const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
+
+            // 3. Retornar o token e os dados da organização
+            res.status(200).send({
+                message: "Login bem-sucedido!",
+                token: token,
+                organizacao: {
+                    id: organizacao.id_organizacao,
+                    nome: organizacao.nome_organizacao,
+                    email: organizacao.email
+                }
+            });
+
+        } catch (error) {
+            console.error(error);
+            res.status(500).send({ message: "Erro interno no servidor." });
+        }
+    };
