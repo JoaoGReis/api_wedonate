@@ -3,24 +3,42 @@
 const db = require('../config/database');
 const bcrypt = require('bcrypt'); // Importa a biblioteca bcrypt
 const jwt = require('jsonwebtoken');
+const validator = require('validator');
+const { isCNPJ } = require('brazilian-values');
 
-// --- CREATE (AGORA COM HASH DE SENHA) ---
+// CREATE: Cria uma organização com validações avançadas
 exports.createOrganizacao = async (req, res) => {
     const { nome_organizacao, cnpj, email, senha, telefone, endereco } = req.body;
 
-    // 1. Validação básica
-    if (!email || !senha || !nome_organizacao || !cnpj || !telefone || !endereco) {
-        return res.status(400).send({ message: "Preencha todos os campos." });
+    // --- BLOCO DE VALIDAÇÃO ---
+
+    // 1. Valida o formato do e-mail
+    if (!validator.isEmail(email)) {
+        return res.status(400).send({ message: "Formato de e-mail inválido." });
+    }
+
+    // 2. Valida a força da senha
+    if (!validator.isStrongPassword(senha, { minLength: 8, minLowercase: 1, minUppercase: 1, minNumbers: 1, minSymbols: 1 })) {
+        return res.status(400).send({ message: "A senha deve ter no mínimo 8 caracteres, com pelo menos uma letra maiúscula, uma minúscula, um número e um símbolo." });
+    }
+
+    // 3. Valida o formato do CNPJ
+    if (!isCNPJ(cnpj)) {
+        return res.status(400).send({ message: "Formato de CNPJ inválido." });
     }
 
     try {
-        // 2. Gerar o "salt" - um valor aleatório para fortalecer o hash
-        const salt = await bcrypt.genSalt(10); // 10 é o custo do processamento. É um bom padrão.
+        // 4. Valida se o e-mail ou CNPJ já existem no banco
+        const orgExistente = await db.query('SELECT * FROM organizacoes WHERE email = $1 OR cnpj = $2', [email, cnpj]);
+        if (orgExistente.rows.length > 0) {
+            return res.status(409).send({ message: "E-mail ou CNPJ já cadastrado." }); // 409 Conflict
+        }
 
-        // 3. Gerar o hash da senha usando o salt
+        // --- FIM DO BLOCO DE VALIDAÇÃO ---
+
+        const salt = await bcrypt.genSalt(10);
         const senha_hash = await bcrypt.hash(senha, salt);
 
-        // 4. Salvar o HASH no banco de dados, e não a senha original
         const { rows } = await db.query(
             "INSERT INTO organizacoes (nome_organizacao, cnpj, email, senha_hash, telefone, endereco) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id_organizacao",
             [nome_organizacao, cnpj, email, senha_hash, telefone, endereco]
@@ -145,52 +163,52 @@ exports.deleteOrganizacaoById = async (req, res) => {
         res.status(500).send({ message: "Erro ao deletar organização." });
     }
 };
-    // --- FUNÇÃO DE LOGIN ATUALIZADA ---
-    exports.loginOrganizacao = async (req, res) => {
-        const { cnpj, senha } = req.body;
+// --- FUNÇÃO DE LOGIN ATUALIZADA ---
+exports.loginOrganizacao = async (req, res) => {
+    const { cnpj, senha } = req.body;
 
-        if (!cnpj || !senha) {
-            return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
+    if (!cnpj || !senha) {
+        return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
+    }
+
+    try {
+        const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj]);
+
+        if (rows.length === 0) {
+            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
         }
 
-        try {
-            const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj]);
+        const organizacao = rows[0];
+        const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
 
-            if (rows.length === 0) {
-                return res.status(401).send({ message: "CNPJ ou senha inválidos." });
-            }
+        if (!senhaValida) {
+            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+        }
 
-            const organizacao = rows[0];
-            const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
+        // --- GERAÇÃO DO TOKEN JWT ---
+        // 1. Criar o "payload" - as informações que queremos guardar no token
+        const payload = {
+            id: organizacao.id_organizacao,
+            nome: organizacao.nome_organizacao
+        };
 
-            if (!senhaValida) {
-                return res.status(401).send({ message: "CNPJ ou senha inválidos." });
-            }
+        // 2. Assinar o token com o segredo do .env
+        // Ele expira em 8 horas ('8h').
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
 
-            // --- GERAÇÃO DO TOKEN JWT ---
-            // 1. Criar o "payload" - as informações que queremos guardar no token
-            const payload = {
+        // 3. Retornar o token e os dados da organização
+        res.status(200).send({
+            message: "Login bem-sucedido!",
+            token: token,
+            organizacao: {
                 id: organizacao.id_organizacao,
-                nome: organizacao.nome_organizacao
-            };
+                nome: organizacao.nome_organizacao,
+                email: organizacao.email
+            }
+        });
 
-            // 2. Assinar o token com o segredo do .env
-            // Ele expira em 8 horas ('8h').
-            const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
-
-            // 3. Retornar o token e os dados da organização
-            res.status(200).send({
-                message: "Login bem-sucedido!",
-                token: token,
-                organizacao: {
-                    id: organizacao.id_organizacao,
-                    nome: organizacao.nome_organizacao,
-                    email: organizacao.email
-                }
-            });
-
-        } catch (error) {
-            console.error(error);
-            res.status(500).send({ message: "Erro interno no servidor." });
-        }
-    };
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Erro interno no servidor." });
+    }
+};
