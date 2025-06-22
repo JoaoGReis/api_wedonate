@@ -1,22 +1,23 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const connectionConfig = {
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false 
-    }
+    connectionString: isProduction
+        ? `${process.env.DATABASE_URL}?ssl=true`
+        : process.env.DATABASE_URL,
+    ssl: isProduction ? { rejectUnauthorized: false } : undefined
 };
 
-if (!process.env.DATABASE_URL) {
+if (!isProduction) {
     connectionConfig.host = process.env.DB_HOST;
     connectionConfig.port = process.env.DB_PORT;
     connectionConfig.user = process.env.DB_USER;
     connectionConfig.password = process.env.DB_PASSWORD;
     connectionConfig.database = process.env.DB_DATABASE;
-    
-    delete connectionConfig.ssl;
     delete connectionConfig.connectionString;
+    delete connectionConfig.ssl;
 }
 
 const pool = new Pool(connectionConfig);
