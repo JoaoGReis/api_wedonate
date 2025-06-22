@@ -1,29 +1,33 @@
+// src/config/database.js
+
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const isProduction = process.env.NODE_ENV === 'production';
+// Pega as variáveis do ambiente. O '||' oferece um valor padrão para desenvolvimento local.
+const user = process.env.DB_USER;
+const password = process.env.DB_PASSWORD;
+const host = process.env.DB_HOST;
+const port = parseInt(process.env.DB_PORT || '5432');
+const database = process.env.DB_DATABASE;
 
-let pool;
+// Monta a string de conexão, que é o formato preferido pela biblioteca 'pg'
+// e lida melhor com diferentes ambientes.
+const connectionString = `postgresql://${user}:${password}@${host}:${port}/${database}`;
 
-if (isProduction) {
-    if (!process.env.DATABASE_URL) {
-        throw new Error('ERRO CRÍTICO: A variável DATABASE_URL não foi encontrada no ambiente de produção.');
+const pool = new Pool({
+    connectionString: connectionString,
+    // A configuração SSL é crucial para produção.
+    // O 'pg' entende que, para conexões na nuvem, ele deve usar SSL
+    // sem precisar de configurações complexas quando a string é usada.
+    // Para garantir, especialmente com AWS, adicionamos esta configuração:
+    ssl: {
+        rejectUnauthorized: false
     }
-    pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: {
-            rejectUnauthorized: false
-        }
-    });
-} else {
-    pool = new Pool({
-        host: process.env.DB_HOST,
-        port: process.env.DB_PORT,
-        user: process.env.DB_USER,
-        password: process.env.DB_PASSWORD,
-        database: process.env.DB_DATABASE
-    });
-}
+});
+
+pool.on('connect', () => {
+    console.log('Base de Dados conectada com sucesso!');
+});
 
 module.exports = {
     query: (text, params) => pool.query(text, params),
