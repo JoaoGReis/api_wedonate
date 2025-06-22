@@ -14,6 +14,7 @@ router.get('/organizacoes', organizacaoController.listAllOrganizacoes);
 
 // Rota GET para buscar uma organização por ID
 router.get('/organizacoes/:id', organizacaoController.findOrganizacaoById);
+router.get('/organizacoes/buscar', organizacaoController.findOrganizacoesByNome);
 
 router.put('/organizacoes/:id', upload.single('imagem'), authMiddleware, organizacaoController.updateOrganizacaoById);
 router.delete('/organizacoes/:id', authMiddleware, organizacaoController.deleteOrganizacaoById);

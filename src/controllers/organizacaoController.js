@@ -60,9 +60,81 @@ exports.createOrganizacao = async (req, res) => {
     }
 };
 
-// --- LOGIN ---
-exports.loginOrganizacao = async (req, res) => { /* ...código existente, sem alterações... */ };
+// --- SEARCH by Name ---
+exports.findOrganizacoesByNome = async (req, res) => {
+    // Pega o termo de busca dos parâmetros da query da URL (ex: ?nome=MinhaONG)
+    const { nome } = req.query;
 
+    if (!nome) {
+        return res.status(400).send({ message: "O parâmetro de busca 'nome' é obrigatório." });
+    }
+
+    try {
+        // Usa ILIKE para uma busca case-insensitive (não diferencia maiúsculas/minúsculas)
+        // Usa '%' como um coringa para encontrar nomes que contenham o termo de busca
+        const searchTerm = `%${nome}%`;
+
+        const { rows } = await db.query(
+            // Selecionamos os campos públicos para não expor a senha_hash
+            'SELECT id_organizacao, nome_organizacao, email, telefone, descricao, cep, rua, numero, bairro, cidade, latitude, longitude, imagem_url FROM organizacoes WHERE nome_organizacao ILIKE $1',
+            [searchTerm]
+        );
+
+        // É normal uma busca não retornar resultados, então enviamos um array vazio nesse caso.
+        // O frontend pode tratar a exibição de uma mensagem "Nenhum resultado encontrado".
+        res.status(200).send(rows);
+
+    } catch (error) {
+        console.error('Erro ao buscar organizações por nome:', error);
+        res.status(500).send({ message: "Erro interno no servidor." });
+    }
+};
+
+// --- LOGIN ---
+exports.loginOrganizacao = async (req, res) => {
+    const { cnpj, senha } = req.body; // No seu app, o login é feito com CNPJ
+
+    // 1. Validação básica
+    if (!cnpj || !senha) {
+        return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
+    }
+
+    try {
+        // 2. Buscar a organização pelo CNPJ no banco
+        const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj]);
+
+        // Se não encontrar, retorna um erro genérico para não informar se o CNPJ existe ou não
+        if (rows.length === 0) {
+            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+        }
+
+        const organizacao = rows[0];
+
+        // 3. Comparar a senha enviada com o hash salvo no banco
+        const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
+
+        // Se a senha não for válida, retorna o mesmo erro genérico
+        if (!senhaValida) {
+            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+        }
+
+        // 4. Se a senha for válida, o login foi bem-sucedido!
+        // (Aqui, futuramente, você irá gerar um Token JWT para autenticação)
+        res.status(200).send({
+            message: "Login bem-sucedido!",
+            organizacao: {
+                id: organizacao.id_organizacao,
+                nome: organizacao.nome_organizacao,
+                email: organizacao.email
+                // Não envie a senha_hash de volta!
+            }
+        });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Erro interno no servidor." });
+    }
+}
 // --- READ (ALL) ---
 exports.listAllOrganizacoes = async (req, res) => {
     try {
