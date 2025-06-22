@@ -3,21 +3,28 @@ require('dotenv').config();
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-const connectionConfig = {
-    connectionString: isProduction
-        ? `${process.env.DATABASE_URL}?ssl=true`
-        : process.env.DATABASE_URL,
-    ssl: isProduction ? { rejectUnauthorized: false } : undefined
-};
+let connectionConfig;
 
-if (!isProduction) {
-    connectionConfig.host = process.env.DB_HOST;
-    connectionConfig.port = process.env.DB_PORT;
-    connectionConfig.user = process.env.DB_USER;
-    connectionConfig.password = process.env.DB_PASSWORD;
-    connectionConfig.database = process.env.DB_DATABASE;
-    delete connectionConfig.connectionString;
-    delete connectionConfig.ssl;
+if (isProduction) {
+
+    if (!process.env.DATABASE_URL) {
+        throw new Error('ERRO CRÍTICO: A variável DATABASE_URL não foi encontrada no ambiente de produção.');
+    }
+
+    connectionConfig = {
+        connectionString: `${process.env.DATABASE_URL}?ssl=true`,
+        ssl: {
+            rejectUnauthorized: false
+        }
+    };
+} else {
+    connectionConfig = {
+        host: process.env.DB_HOST,
+        port: process.env.DB_PORT,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        database: process.env.DB_DATABASE
+    };
 }
 
 const pool = new Pool(connectionConfig);
