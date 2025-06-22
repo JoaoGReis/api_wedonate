@@ -15,12 +15,14 @@ const organizacaoRoutes = require('./routes/organizacaoRoutes');
 const campanhaRoutes = require('./routes/campanhaRoutes');
 const localRoutes = require('./routes/localRoutes');
 const consultaRoutes = require('./routes/consultaRoutes'); // 1. IMPORTAR AS NOVAS ROTAS AQUI
+const viacepRoutes = require('./routes/viacepRoutes');
 
 // Define um prefixo para as rotas.
 app.use('/api/v1', organizacaoRoutes);
 app.use('/api/v1', campanhaRoutes);
 app.use('/api/v1', localRoutes);
 app.use('/api/v1', consultaRoutes); // 2. USAR AS NOVAS ROTAS AQUI
+app.use('/api/v1/consultas', viacepRoutes);
 
 // Rota raiz para teste
 app.get('/', (req, res) => {
