@@ -4,7 +4,7 @@ require('dotenv').config();
 const connectionConfig = {
     connectionString: process.env.DATABASE_URL,
     ssl: {
-        rejectUnauthorized: process.env.NODE_ENV === 'production' 
+        rejectUnauthorized: false 
     }
 };
 
@@ -14,7 +14,9 @@ if (!process.env.DATABASE_URL) {
     connectionConfig.user = process.env.DB_USER;
     connectionConfig.password = process.env.DB_PASSWORD;
     connectionConfig.database = process.env.DB_DATABASE;
-    delete connectionConfig.connectionString; 
+    
+    delete connectionConfig.ssl;
+    delete connectionConfig.connectionString;
 }
 
 const pool = new Pool(connectionConfig);
