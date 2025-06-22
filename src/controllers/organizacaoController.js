@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const validator = require('validator');
 const { isCNPJ } = require('brazilian-values');
 const geocodeService = require('../services/geocodeService');
-const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3'); // Importa para S3
+const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 require('dotenv').config();
 
 // Instancia o cliente S3
@@ -14,49 +14,86 @@ const s3Client = new S3Client({
     region: process.env.AWS_BUCKET_REGION
 });
 
-// CREATE: Cria uma organização com validação, geocoding e imagem
+const DEFAULT_IMAGE_URL = 'https://wedonate-imagens-campanhas-vitor-2025.s3.sa-east-1.amazonaws.com/default_logo.png'; // Lembre-se de ter uma imagem padrão no seu S3
+
+// Função auxiliar para validação de senha detalhada
+const validatePasswordWithDetails = (senha) => {
+    if (!senha || senha.length < 8) return { isValid: false, message: 'A senha deve ter no mínimo 8 caracteres.' };
+    if (!/[a-z]/.test(senha)) return { isValid: false, message: 'A senha deve conter pelo menos uma letra minúscula.' };
+    if (!/[A-Z]/.test(senha)) return { isValid: false, message: 'A senha deve conter pelo menos uma letra maiúscula.' };
+    if (!/\d/.test(senha)) return { isValid: false, message: 'A senha deve conter pelo menos um número.' };
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(senha)) return { isValid: false, message: 'A senha deve conter pelo menos um símbolo especial.' };
+    return { isValid: true, message: '' };
+};
+
+// --- CREATE ---
 exports.createOrganizacao = async (req, res) => {
     const { nome_organizacao, cnpj, email, senha, telefone, descricao, cep, rua, numero, bairro, cidade } = req.body;
-    // Pega a URL da imagem do middleware multer, se ela foi enviada
-    const imagem_url = req.file ? req.file.location : null;
+    const imagem_url = req.file ? req.file.location : DEFAULT_IMAGE_URL;
 
-    // Bloco de Validação
+    // Validações
     if (!validator.isEmail(email)) return res.status(400).send({ message: "Formato de e-mail inválido." });
-    if (!validator.isStrongPassword(senha, { minLength: 8, minLowercase: 1, minUppercase: 1, minNumbers: 1, minSymbols: 1 })) return res.status(400).send({ message: "A senha não atende aos requisitos de segurança." });
+    const passwordValidation = validatePasswordWithDetails(senha);
+    if (!passwordValidation.isValid) return res.status(400).send({ message: passwordValidation.message });
     if (!isCNPJ(cnpj)) return res.status(400).send({ message: "Formato de CNPJ inválido." });
 
     try {
         const orgExistente = await db.query('SELECT * FROM organizacoes WHERE email = $1 OR cnpj = $2', [email, cnpj]);
-        if (orgExistente.rows.length > 0) {
-            return res.status(409).send({ message: "E-mail ou CNPJ já cadastrado." });
-        }
+        if (orgExistente.rows.length > 0) return res.status(409).send({ message: "E-mail ou CNPJ já cadastrado." });
 
         const enderecoCompleto = `${rua}, ${numero}, ${bairro}, ${cidade}, ${cep}`;
         const coordenadas = await geocodeService.getCoordsFromAddress(enderecoCompleto);
-        if (!coordenadas) {
-            return res.status(400).send({ message: "Endereço não pôde ser encontrado no mapa." });
-        }
+        if (!coordenadas) return res.status(400).send({ message: "Endereço não pôde ser encontrado no mapa." });
         const { latitude, longitude } = coordenadas;
 
         const salt = await bcrypt.genSalt(10);
         const senha_hash = await bcrypt.hash(senha, salt);
 
-        // Query de inserção ATUALIZADA com a coluna imagem_url
         const { rows } = await db.query(
-            `INSERT INTO organizacoes 
-             (nome_organizacao, cnpj, email, senha_hash, telefone, descricao, cep, rua, numero, bairro, cidade, latitude, longitude, imagem_url) 
+            `INSERT INTO organizacoes (nome_organizacao, cnpj, email, senha_hash, telefone, descricao, cep, rua, numero, bairro, cidade, latitude, longitude, imagem_url) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id_organizacao`,
             [nome_organizacao, cnpj, email, senha_hash, telefone, descricao, cep, rua, numero, bairro, cidade, latitude, longitude, imagem_url]
         );
-
-        res.status(201).send({
-            message: "Organização criada com sucesso!",
-            organizacaoId: rows[0].id_organizacao
-        });
-
+        res.status(201).send({ message: "Organização criada com sucesso!", organizacaoId: rows[0].id_organizacao });
     } catch (error) {
         console.error(error);
         res.status(500).send({ message: "Erro ao criar organização." });
+    }
+};
+
+// --- LOGIN ---
+exports.loginOrganizacao = async (req, res) => {
+    const { cnpj, senha } = req.body;
+    if (!cnpj || !senha) {
+        return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
+    }
+    try {
+        const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj.replace(/\D/g, '')]);
+        if (rows.length === 0) {
+            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+        }
+        const organizacao = rows[0];
+        const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
+        if (!senhaValida) {
+            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+        }
+        const payload = {
+            id: organizacao.id_organizacao,
+            nome: organizacao.nome_organizacao
+        };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
+        res.status(200).send({
+            message: "Login bem-sucedido!",
+            token: token,
+            organizacao: {
+                id: organizacao.id_organizacao,
+                nome: organizacao.nome_organizacao,
+                email: organizacao.email
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Erro interno no servidor." });
     }
 };
 
@@ -90,51 +127,6 @@ exports.findOrganizacoesByNome = async (req, res) => {
     }
 };
 
-// --- LOGIN ---
-exports.loginOrganizacao = async (req, res) => {
-    const { cnpj, senha } = req.body; // No seu app, o login é feito com CNPJ
-
-    // 1. Validação básica
-    if (!cnpj || !senha) {
-        return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
-    }
-
-    try {
-        // 2. Buscar a organização pelo CNPJ no banco
-        const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj]);
-
-        // Se não encontrar, retorna um erro genérico para não informar se o CNPJ existe ou não
-        if (rows.length === 0) {
-            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
-        }
-
-        const organizacao = rows[0];
-
-        // 3. Comparar a senha enviada com o hash salvo no banco
-        const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
-
-        // Se a senha não for válida, retorna o mesmo erro genérico
-        if (!senhaValida) {
-            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
-        }
-
-        // 4. Se a senha for válida, o login foi bem-sucedido!
-        // (Aqui, futuramente, você irá gerar um Token JWT para autenticação)
-        res.status(200).send({
-            message: "Login bem-sucedido!",
-            organizacao: {
-                id: organizacao.id_organizacao,
-                nome: organizacao.nome_organizacao,
-                email: organizacao.email
-                // Não envie a senha_hash de volta!
-            }
-        });
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: "Erro interno no servidor." });
-    }
-}
 // --- READ (ALL) ---
 exports.listAllOrganizacoes = async (req, res) => {
     try {
@@ -240,3 +232,4 @@ exports.deleteOrganizacaoById = async (req, res) => {
         res.status(500).send({ message: "Erro ao deletar organização." });
     }
 };
+
