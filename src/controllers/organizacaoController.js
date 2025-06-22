@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const validator = require('validator');
 const { isCNPJ } = require('brazilian-values');
 const geocodeService = require('../services/geocodeService');
-const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3'); // Importa para S3
 require('dotenv').config();
 
 // Instancia o cliente S3
@@ -14,92 +14,51 @@ const s3Client = new S3Client({
     region: process.env.AWS_BUCKET_REGION
 });
 
-const DEFAULT_IMAGE_URL = 'https://wedonate-imagens-campanhas-vitor-2025.s3.sa-east-1.amazonaws.com/default_logo.png'; // Lembre-se de ter uma imagem padrão no seu S3
-
-// Função auxiliar para validação de senha detalhada
-const validatePasswordWithDetails = (senha) => {
-    if (!senha || senha.length < 8) return { isValid: false, message: 'A senha deve ter no mínimo 8 caracteres.' };
-    if (!/[a-z]/.test(senha)) return { isValid: false, message: 'A senha deve conter pelo menos uma letra minúscula.' };
-    if (!/[A-Z]/.test(senha)) return { isValid: false, message: 'A senha deve conter pelo menos uma letra maiúscula.' };
-    if (!/\d/.test(senha)) return { isValid: false, message: 'A senha deve conter pelo menos um número.' };
-    if (!/[!@#$%^&*(),.?":{}|<>]/.test(senha)) return { isValid: false, message: 'A senha deve conter pelo menos um símbolo especial.' };
-    return { isValid: true, message: '' };
-};
-
-// --- CREATE ---
 exports.createOrganizacao = async (req, res) => {
     const { nome_organizacao, cnpj, email, senha, telefone, descricao, cep, rua, numero, bairro, cidade } = req.body;
-    const imagem_url = req.file ? req.file.location : DEFAULT_IMAGE_URL;
 
-    // Validações
+    const imagem_url = req.file ? req.file.location : null;
+
     if (!validator.isEmail(email)) return res.status(400).send({ message: "Formato de e-mail inválido." });
-    const passwordValidation = validatePasswordWithDetails(senha);
-    if (!passwordValidation.isValid) return res.status(400).send({ message: passwordValidation.message });
+    if (!validator.isStrongPassword(senha, { minLength: 8, minLowercase: 1, minUppercase: 1, minNumbers: 1, minSymbols: 1 })) return res.status(400).send({ message: "A senha não atende aos requisitos de segurança." });
     if (!isCNPJ(cnpj)) return res.status(400).send({ message: "Formato de CNPJ inválido." });
 
     try {
         const orgExistente = await db.query('SELECT * FROM organizacoes WHERE email = $1 OR cnpj = $2', [email, cnpj]);
-        if (orgExistente.rows.length > 0) return res.status(409).send({ message: "E-mail ou CNPJ já cadastrado." });
+        if (orgExistente.rows.length > 0) {
+            return res.status(409).send({ message: "E-mail ou CNPJ já cadastrado." });
+        }
 
         const enderecoCompleto = `${rua}, ${numero}, ${bairro}, ${cidade}, ${cep}`;
         const coordenadas = await geocodeService.getCoordsFromAddress(enderecoCompleto);
-        if (!coordenadas) return res.status(400).send({ message: "Endereço não pôde ser encontrado no mapa." });
+        if (!coordenadas) {
+            return res.status(400).send({ message: "Endereço não pôde ser encontrado no mapa." });
+        }
         const { latitude, longitude } = coordenadas;
 
         const salt = await bcrypt.genSalt(10);
         const senha_hash = await bcrypt.hash(senha, salt);
 
         const { rows } = await db.query(
-            `INSERT INTO organizacoes (nome_organizacao, cnpj, email, senha_hash, telefone, descricao, cep, rua, numero, bairro, cidade, latitude, longitude, imagem_url) 
+            `INSERT INTO organizacoes 
+             (nome_organizacao, cnpj, email, senha_hash, telefone, descricao, cep, rua, numero, bairro, cidade, latitude, longitude, imagem_url) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id_organizacao`,
             [nome_organizacao, cnpj, email, senha_hash, telefone, descricao, cep, rua, numero, bairro, cidade, latitude, longitude, imagem_url]
         );
-        res.status(201).send({ message: "Organização criada com sucesso!", organizacaoId: rows[0].id_organizacao });
+
+        res.status(201).send({
+            message: "Organização criada com sucesso!",
+            organizacaoId: rows[0].id_organizacao
+        });
+
     } catch (error) {
         console.error(error);
         res.status(500).send({ message: "Erro ao criar organização." });
     }
 };
 
-// --- LOGIN ---
-exports.loginOrganizacao = async (req, res) => {
-    const { cnpj, senha } = req.body;
-    if (!cnpj || !senha) {
-        return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
-    }
-    try {
-        const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj.replace(/\D/g, '')]);
-        if (rows.length === 0) {
-            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
-        }
-        const organizacao = rows[0];
-        const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
-        if (!senhaValida) {
-            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
-        }
-        const payload = {
-            id: organizacao.id_organizacao,
-            nome: organizacao.nome_organizacao
-        };
-        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
-        res.status(200).send({
-            message: "Login bem-sucedido!",
-            token: token,
-            organizacao: {
-                id: organizacao.id_organizacao,
-                nome: organizacao.nome_organizacao,
-                email: organizacao.email
-            }
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: "Erro interno no servidor." });
-    }
-};
-
 // --- SEARCH by Name ---
 exports.findOrganizacoesByNome = async (req, res) => {
-    // Pega o termo de busca dos parâmetros da query da URL (ex: ?nome=MinhaONG)
     const { nome } = req.query;
 
     if (!nome) {
@@ -107,18 +66,13 @@ exports.findOrganizacoesByNome = async (req, res) => {
     }
 
     try {
-        // Usa ILIKE para uma busca case-insensitive (não diferencia maiúsculas/minúsculas)
-        // Usa '%' como um coringa para encontrar nomes que contenham o termo de busca
         const searchTerm = `%${nome}%`;
 
         const { rows } = await db.query(
-            // Selecionamos os campos públicos para não expor a senha_hash
             'SELECT id_organizacao, nome_organizacao, email, telefone, descricao, cep, rua, numero, bairro, cidade, latitude, longitude, imagem_url FROM organizacoes WHERE nome_organizacao ILIKE $1',
             [searchTerm]
         );
 
-        // É normal uma busca não retornar resultados, então enviamos um array vazio nesse caso.
-        // O frontend pode tratar a exibição de uma mensagem "Nenhum resultado encontrado".
         res.status(200).send(rows);
 
     } catch (error) {
@@ -157,31 +111,64 @@ exports.findOrganizacaoById = async (req, res) => {
 
 // --- UPDATE ---
 exports.updateOrganizacaoById = async (req, res) => {
+    // 1. Pega os IDs para validação de permissão
     const { id } = req.params;
     const id_org_logada = req.organizacao.id;
 
+    // 2. Lógica de AUTORIZAÇÃO: Garante que o usuário só pode editar o próprio perfil
     if (id_org_logada !== parseInt(id, 10)) {
-        return res.status(403).send({ message: "Acesso negado." });
+        return res.status(403).send({ message: "Acesso negado. Você não tem permissão para alterar estes dados." });
     }
 
+    // 3. Pega os dados que podem ser alterados do corpo da requisição e do arquivo
     const { nome_organizacao, telefone, senha, descricao, cep, rua, numero, bairro, cidade } = req.body;
     const nova_imagem_url = req.file ? req.file.location : undefined;
 
     try {
-        const orgDataResult = await db.query('SELECT * FROM organizacoes WHERE id_organizacao = $1', [id]);
-        if (orgDataResult.rows.length === 0) return res.status(404).send({ message: "Organização não encontrada." });
+        // 4. VALIDAÇÃO DA NOVA SENHA (se ela foi enviada)
+        // Usando o padrão que você solicitou.
+        if (senha) {
+            if (!validator.isStrongPassword(senha, { minLength: 8, minLowercase: 1, minUppercase: 1, minNumbers: 1, minSymbols: 1 })) {
+                return res.status(400).send({ message: "A nova senha não atende aos requisitos de segurança (mínimo 8 caracteres, com maiúsculas, minúsculas, números e símbolos)." });
+            }
+        }
 
+        // 5. Busca os dados atuais da organização no banco
+        const orgDataResult = await db.query('SELECT * FROM organizacoes WHERE id_organizacao = $1', [id]);
+        if (orgDataResult.rows.length === 0) {
+            return res.status(404).send({ message: "Organização não encontrada." });
+        }
         const organizacaoAtual = orgDataResult.rows[0];
 
-        // Se uma nova imagem foi enviada e existia uma antiga, deleta a antiga
-        if (nova_imagem_url && organizacaoAtual.imagem_url) {
+        // 6. VALIDAÇÃO DE TEMPO (regra dos 30 dias)
+        if (organizacaoAtual.data_ultima_alteracao) {
+            const hoje = new Date();
+            const diffTime = Math.abs(hoje - new Date(organizacaoAtual.data_ultima_alteracao));
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            if (diffDays <= 30) {
+                return res.status(403).send({ message: `Alteração não permitida. Próxima alteração em ${31 - diffDays} dia(s).` });
+            }
+        }
+
+        // 7. Lógica de GEOCODING AUTOMÁTICO (se algum campo de endereço foi alterado)
+        let novasCoordenadas = {};
+        if (rua || numero || bairro || cidade || cep) {
+            const enderecoCompleto = `${rua || organizacaoAtual.rua}, ${numero || organizacaoAtual.numero}, ${bairro || organizacaoAtual.bairro}, ${cidade || organizacaoAtual.cidade}, ${cep || organizacaoAtual.cep}`;
+            const coords = await geocodeService.getCoordsFromAddress(enderecoCompleto);
+            if (coords) {
+                novasCoordenadas = { latitude: coords.latitude, longitude: coords.longitude };
+            }
+        }
+
+        // 8. Lógica de GERENCIAMENTO DE IMAGEM (deleta a antiga se uma nova for enviada)
+        if (nova_imagem_url && organizacaoAtual.imagem_url && organizacaoAtual.imagem_url !== DEFAULT_IMAGE_URL) {
             const oldKey = organizacaoAtual.imagem_url.split('/').pop();
             await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: oldKey }));
         }
 
-        // ... (lógica de 30 dias e geocoding continua aqui) ...
+        // Prepara um objeto apenas com os campos que podem ser atualizados
+        const camposParaAtualizar = { nome_organizacao, telefone, descricao, cep, rua, numero, bairro, cidade, ...novasCoordenadas };
 
-        const camposParaAtualizar = { nome_organizacao, telefone, descricao, cep, rua, numero, bairro, cidade };
         if (nova_imagem_url) {
             camposParaAtualizar.imagem_url = nova_imagem_url;
         }
@@ -189,19 +176,60 @@ exports.updateOrganizacaoById = async (req, res) => {
             camposParaAtualizar.senha_hash = await bcrypt.hash(senha, await bcrypt.genSalt(10));
         }
 
-        const setClause = Object.keys(camposParaAtualizar).filter(key => camposParaAtualizar[key] !== undefined).map((key, index) => `"${key}" = $${index + 1}`).join(', ');
+        // Monta a query de UPDATE dinamicamente
+        const setClause = Object.keys(camposParaAtualizar).filter(key => camposParaAtualizar[key] !== undefined && camposParaAtualizar[key] !== null).map((key, index) => `"${key}" = $${index + 1}`).join(', ');
         if (!setClause) return res.status(400).send({ message: "Nenhum campo para atualizar foi fornecido." });
 
-        const values = Object.values(camposParaAtualizar).filter(value => value !== undefined);
+        const values = Object.values(camposParaAtualizar).filter(value => value !== undefined && value !== null);
 
-        await db.query(`UPDATE organizacoes SET ${setClause}, data_ultima_alteracao = NOW() WHERE id_organizacao = $${values.length + 1}`, [...values, id]);
+        // Executa a query final
+        await db.query(
+            `UPDATE organizacoes SET ${setClause}, data_ultima_alteracao = NOW() WHERE id_organizacao = $${values.length + 1}`,
+            [...values, id]
+        );
+
         res.status(200).send({ message: 'Organização atualizada com sucesso!' });
+
     } catch (error) {
         console.error('Erro ao atualizar organização:', error);
         res.status(500).send({ message: "Erro interno no servidor." });
     }
 };
-
+// --- LOGIN ---Add commentMore actions
+exports.loginOrganizacao = async (req, res) => {
+    const { cnpj, senha } = req.body;
+    if (!cnpj || !senha) {
+        return res.status(400).send({ message: "CNPJ e senha são obrigatórios." });
+    }
+    try {
+        const { rows } = await db.query('SELECT * FROM organizacoes WHERE cnpj = $1', [cnpj.replace(/\D/g, '')]);
+        if (rows.length === 0) {
+            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+        }
+        const organizacao = rows[0];
+        const senhaValida = await bcrypt.compare(senha, organizacao.senha_hash);
+        if (!senhaValida) {
+            return res.status(401).send({ message: "CNPJ ou senha inválidos." });
+        }
+        const payload = {
+            id: organizacao.id_organizacao,
+            nome: organizacao.nome_organizacao
+        };
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
+        res.status(200).send({
+            message: "Login bem-sucedido!",
+            token: token,
+            organizacao: {
+                id: organizacao.id_organizacao,
+                nome: organizacao.nome_organizacao,
+                email: organizacao.email
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Erro interno no servidor." });
+    }
+};
 // --- DELETE ---
 exports.deleteOrganizacaoById = async (req, res) => {
     const { id } = req.params;

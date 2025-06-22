@@ -4,12 +4,11 @@ const db = require('../config/database');
 const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 require('dotenv').config();
 
-// Reutilizamos a instância do cliente S3 que já temos
 const s3Client = new S3Client({
     region: process.env.AWS_BUCKET_REGION
 });
 
-// CREATE: Cadastra um novo local de forma segura
+
 exports.createLocal = async (req, res) => {
     // 1. O ID da organização que está cadastrando vem do token, não do corpo da requisição.
     const id_org_cadastro = req.organizacao.id;
