@@ -1,21 +1,24 @@
-// src/config/database.js
-
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Cria um pool de conexões com base nas credenciais do arquivo .env
-const pool = new Pool({
-    host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_DATABASE,
+const connectionConfig = {
+    connectionString: process.env.DATABASE_URL,
     ssl: {
-        rejectUnauthorized: false // Importante para conexões com a AWS
+        rejectUnauthorized: process.env.NODE_ENV === 'production' 
     }
-});
+};
 
-// Exporta um objeto que permite executar queries de forma centralizada
+if (!process.env.DATABASE_URL) {
+    connectionConfig.host = process.env.DB_HOST;
+    connectionConfig.port = process.env.DB_PORT;
+    connectionConfig.user = process.env.DB_USER;
+    connectionConfig.password = process.env.DB_PASSWORD;
+    connectionConfig.database = process.env.DB_DATABASE;
+    delete connectionConfig.connectionString; 
+}
+
+const pool = new Pool(connectionConfig);
+
 module.exports = {
     query: (text, params) => pool.query(text, params),
 };
