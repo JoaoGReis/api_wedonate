@@ -17,7 +17,6 @@ const upload = multer({
         s3: s3Client, // Passa o cliente v3 para o multer-s3
         bucket: process.env.AWS_BUCKET_NAME,
         contentType: multerS3.AUTO_CONTENT_TYPE,
-        acl: 'public-read',
         key: (req, file, cb) => {
             const fileName = `${Date.now().toString()}-${file.originalname}`;
             cb(null, fileName);
