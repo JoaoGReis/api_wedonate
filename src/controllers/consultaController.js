@@ -9,7 +9,7 @@ exports.consultarCNPJ = async (req, res) => {
     }
 
     try {
-        // A MUDANÇA ESTÁ AQUI: Adicionamos o cabeçalho 'User-Agent' na requisição
+       
         const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpjApenasNumeros}`, {
             method: 'GET',
             headers: {

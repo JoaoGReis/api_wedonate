@@ -98,7 +98,6 @@ exports.findCampanhaById = async (req, res) => {
 };
 // --- SEARCH by Titulo ---
 exports.findCampanhasByTitulo = async (req, res) => {
-    // Pega o termo de busca dos parâmetros da query da URL (ex: ?titulo=Roupas)
     const { titulo } = req.query;
 
     if (!titulo) {
@@ -106,15 +105,12 @@ exports.findCampanhasByTitulo = async (req, res) => {
     }
 
     try {
-        // Usa ILIKE para busca case-insensitive e '%' como coringa
         const searchTerm = `%${titulo}%`;
 
         const { rows } = await db.query(
             'SELECT * FROM campanhas WHERE titulo ILIKE $1 ORDER BY data_criacao DESC',
             [searchTerm]
         );
-
-        // Mapeia os resultados para adicionar o campo calculado 'tempo_restante'
         const campanhasComTempo = rows.map(campanha => ({
             ...campanha,
             tempo_restante: calcularTempoRestante(campanha.data_fim)
