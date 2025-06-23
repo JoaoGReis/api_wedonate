@@ -146,7 +146,7 @@ exports.updateOrganizacaoById = async (req, res) => {
         }
 
         // CORREÇÃO APLICADA AQUI: Condição mais segura para deletar a imagem
-        if (nova_imagem_url && organizacaoAtual.imagem_url && organizacaoAtual.imagem_url !== DEFAULT_IMAGE_URL) {
+        if (nova_imagem_url && organizacaoAtual.imagem_url && organizacaoAtual.imagem_url) {
             const oldKey = organizacaoAtual.imagem_url.split('/').pop();
             await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: oldKey }));
         }
