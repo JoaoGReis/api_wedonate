@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const validator = require('validator');
 const { isCNPJ } = require('brazilian-values');
 const geocodeService = require('../services/geocodeService');
-const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3'); 
+const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 require('dotenv').config();
 
 
@@ -111,30 +111,23 @@ exports.findOrganizacaoById = async (req, res) => {
 
 // --- UPDATE ---
 exports.updateOrganizacaoById = async (req, res) => {
-
     const { id } = req.params;
     const id_org_logada = req.organizacao.id;
 
     if (id_org_logada !== parseInt(id, 10)) {
-        return res.status(403).send({ message: "Acesso negado. Você não tem permissão para alterar estes dados." });
+        return res.status(403).send({ message: "Acesso negado." });
     }
 
     const { nome_organizacao, telefone, senha, descricao, cep, rua, numero, bairro, cidade } = req.body;
     const nova_imagem_url = req.file ? req.file.location : undefined;
 
     try {
-        if (senha) {
-            if (!validator.isStrongPassword(senha, { minLength: 8, minLowercase: 1, minUppercase: 1, minNumbers: 1, minSymbols: 1 })) {
-                return res.status(400).send({ message: "A nova senha não atende aos requisitos de segurança (mínimo 8 caracteres, com maiúsculas, minúsculas, números e símbolos)." });
-            }
-        }
-
         const orgDataResult = await db.query('SELECT * FROM organizacoes WHERE id_organizacao = $1', [id]);
-        if (orgDataResult.rows.length === 0) {
-            return res.status(404).send({ message: "Organização não encontrada." });
-        }
+        if (orgDataResult.rows.length === 0) return res.status(404).send({ message: "Organização não encontrada." });
+
         const organizacaoAtual = orgDataResult.rows[0];
 
+        // Regra dos 30 dias
         if (organizacaoAtual.data_ultima_alteracao) {
             const hoje = new Date();
             const diffTime = Math.abs(hoje - new Date(organizacaoAtual.data_ultima_alteracao));
@@ -144,41 +137,38 @@ exports.updateOrganizacaoById = async (req, res) => {
             }
         }
 
+        // Geocoding se o endereço mudar
         let novasCoordenadas = {};
         if (rua || numero || bairro || cidade || cep) {
             const enderecoCompleto = `${rua || organizacaoAtual.rua}, ${numero || organizacaoAtual.numero}, ${bairro || organizacaoAtual.bairro}, ${cidade || organizacaoAtual.cidade}, ${cep || organizacaoAtual.cep}`;
             const coords = await geocodeService.getCoordsFromAddress(enderecoCompleto);
-            if (coords) {
-                novasCoordenadas = { latitude: coords.latitude, longitude: coords.longitude };
-            }
+            if (coords) novasCoordenadas = { latitude: coords.latitude, longitude: coords.longitude };
         }
 
+        // CORREÇÃO APLICADA AQUI: Condição mais segura para deletar a imagem
         if (nova_imagem_url && organizacaoAtual.imagem_url && organizacaoAtual.imagem_url !== DEFAULT_IMAGE_URL) {
             const oldKey = organizacaoAtual.imagem_url.split('/').pop();
             await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: oldKey }));
         }
 
+        // Validação da nova senha
         const camposParaAtualizar = { nome_organizacao, telefone, descricao, cep, rua, numero, bairro, cidade, ...novasCoordenadas };
-
-        if (nova_imagem_url) {
-            camposParaAtualizar.imagem_url = nova_imagem_url;
-        }
+        if (nova_imagem_url) camposParaAtualizar.imagem_url = nova_imagem_url;
         if (senha) {
+            if (!validator.isStrongPassword(senha, { minLength: 8, minLowercase: 1, minUppercase: 1, minNumbers: 1, minSymbols: 1 })) {
+                return res.status(400).send({ message: "A nova senha não atende aos requisitos de segurança." });
+            }
             camposParaAtualizar.senha_hash = await bcrypt.hash(senha, await bcrypt.genSalt(10));
         }
 
-        const setClause = Object.keys(camposParaAtualizar).filter(key => camposParaAtualizar[key] !== undefined && camposParaAtualizar[key] !== null).map((key, index) => `"${key}" = $${index + 1}`).join(', ');
+        // Montagem e execução da query de update
+        const setClause = Object.keys(camposParaAtualizar).filter(key => camposParaAtualizar[key] !== undefined).map((key, index) => `"${key}" = $${index + 1}`).join(', ');
         if (!setClause) return res.status(400).send({ message: "Nenhum campo para atualizar foi fornecido." });
 
-        const values = Object.values(camposParaAtualizar).filter(value => value !== undefined && value !== null);
-
-        await db.query(
-            `UPDATE organizacoes SET ${setClause}, data_ultima_alteracao = NOW() WHERE id_organizacao = $${values.length + 1}`,
-            [...values, id]
-        );
+        const values = Object.values(camposParaAtualizar).filter(value => value !== undefined);
+        await db.query(`UPDATE organizacoes SET ${setClause}, data_ultima_alteracao = NOW() WHERE id_organizacao = $${values.length + 1}`, [...values, id]);
 
         res.status(200).send({ message: 'Organização atualizada com sucesso!' });
-
     } catch (error) {
         console.error('Erro ao atualizar organização:', error);
         res.status(500).send({ message: "Erro interno no servidor." });
@@ -235,7 +225,7 @@ exports.deleteOrganizacaoById = async (req, res) => {
         }
 
         const imagemUrl = orgResult.rows[0].imagem_url;
-        
+
         if (imagemUrl) {
             const nomeArquivo = imagemUrl.split('/').pop();
             await s3Client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: nomeArquivo }));
